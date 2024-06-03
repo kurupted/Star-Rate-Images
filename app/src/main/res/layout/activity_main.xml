@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:gravity="center_horizontal">
+
+    <!-- Button to open file picker -->
+    <Button
+        android:id="@+id/btnOpenFilePicker"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Select Images"
+        android:layout_marginBottom="20dp"
+        android:layout_marginTop="50dp"/>
+
+    <TextView
+        android:id="@+id/tvStarLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="New Rating:"
+        android:textSize="18sp"
+        android:layout_marginBottom="16dp"/>
+
+    <!-- RatingBar for star rating -->
+    <RatingBar
+        android:id="@+id/ratingBar"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:numStars="5"
+        android:rating="3"
+        android:stepSize="1.0"
+        android:layout_marginBottom="20dp"/>
+
+
+
+    <!-- Apply Button -->
+    <Button
+        android:id="@+id/btnApply"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Apply"
+        android:layout_marginBottom="50dp"/>
+
+
+    <!-- TextView to display the number of shared files -->
+    <TextView
+        android:id="@+id/tvNumberOfFiles"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Number of files: 0"
+        android:textSize="18sp"
+        android:layout_marginBottom="20dp"/>
+
+    <TextView
+        android:id="@+id/tvInfo"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text=""
+        android:textSize="18sp"
+        android:layout_marginBottom="30dp"/>
+
+</LinearLayout>
