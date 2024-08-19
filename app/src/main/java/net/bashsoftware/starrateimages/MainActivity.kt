@@ -203,40 +203,16 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        val contentUriList = imageUris.mapNotNull { uri ->
+        imageUris.forEach { uri ->
             Log.d("WriteAccess", "Processing URI: $uri")
-            when {
-                DocumentsContract.isDocumentUri(this, uri) -> {
-                    Log.d("WriteAccess", "Is document URI")
-                    uri
-                }
-                uri.scheme == "content" -> {
-                    Log.d("WriteAccess", "Is content URI")
-                    uri
-                }
-                else -> {
-                    Log.e("WriteAccess", "Unsupported URI scheme: ${uri.scheme}")
-                    null
-                }
-            }
-        }
-        Log.d("WriteAccess", "Content URIs: $contentUriList")
-
-        if (contentUriList.isNotEmpty()) {
             try {
-                val intentSender = MediaStore.createWriteRequest(contentResolver, contentUriList).intentSender
-                startIntentSenderForResult(intentSender, WRITE_REQUEST_CODE, null, 0, 0, 0)
-                Log.d("WriteAccess", "Write request sent for ${contentUriList.size} files")
-            } catch (e: IntentSender.SendIntentException) {
-                Log.e("WriteAccess", "Error requesting write access: ${e.message}")
-                Toast.makeText(this, "Failed to request write access", Toast.LENGTH_SHORT).show()
-            } catch (e: IllegalArgumentException) {
-                Log.e("WriteAccess", "IllegalArgumentException: ${e.message}")
-                Toast.makeText(this, "Invalid file selection", Toast.LENGTH_SHORT).show()
+                val takeFlags: Int = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                contentResolver.takePersistableUriPermission(uri, takeFlags)
+                Log.d("WriteAccess", "Took persistable URI permission for $uri")
+            } catch (e: SecurityException) {
+                Log.e("WriteAccess", "Failed to take persistable URI permission: ${e.message}")
             }
-        } else {
-            Log.e("WriteAccess", "No valid content URIs found")
-            Toast.makeText(this, "No valid files to modify", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -413,11 +389,16 @@ class MainActivity : AppCompatActivity() {
     private fun modifySharedFiles(context: Context) {
         imageUris.forEach { uri ->
             try {
+                // Check if we have write permission
+                val takeFlags: Int = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                context.contentResolver.takePersistableUriPermission(uri, takeFlags)
+
                 // Check if the file is a valid JPEG
                 val mimeType = context.contentResolver.getType(uri)
                 if (mimeType != "image/jpeg") {
                     Log.e("modifySharedFiles", "Skipping non-JPEG file: $uri")
-                    showToast(context, "Skipping non-JPEG file: $uri")
+                    showToast(context, "Skipping non-JPEG file: ${getFileName(uri)}")
                     return@forEach
                 }
 
@@ -443,12 +424,16 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                 }
+                Log.d("modifySharedFiles", "Successfully modified file: ${getFileName(uri)}")
+            } catch (e: SecurityException) {
+                Log.e("modifySharedFiles", "Permission denied for file: ${getFileName(uri)}")
+                showToast(context, "Permission denied for file: ${getFileName(uri)}")
             } catch (e: IOException) {
-                Log.e("modifySharedFile", "IOException occurred: ${e.message}")
+                Log.e("modifySharedFiles", "IOException occurred: ${e.message}")
                 showToast(context, "IOException occurred: ${e.message}")
             } catch (e: org.apache.commons.imaging.ImageReadException) {
-                Log.e("modifySharedFile", "ImageReadException occurred: ${e.message}")
-                showToast(context, "File is not a valid JPEG: ${e.message}")
+                Log.e("modifySharedFiles", "ImageReadException occurred: ${e.message}")
+                showToast(context, "File is not a valid JPEG: ${getFileName(uri)}")
             }
         }
         refreshFileList()
