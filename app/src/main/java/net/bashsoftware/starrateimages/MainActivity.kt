@@ -36,9 +36,16 @@ import java.io.StringWriter
 import kotlin.math.roundToInt
 
 import android.Manifest
+import android.content.ContentUris
+import android.content.ContentValues
 import android.content.IntentSender
+import android.os.Build
+import android.os.Environment
+import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.OpenableColumns
+import android.provider.Settings
+
 
 
 class MainActivity : AppCompatActivity() {
@@ -48,8 +55,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var ratingBar: RatingBar
     private lateinit var btnApply: Button
     private lateinit var btnOpenFilePicker: Button
-    private lateinit var btnOpenDirPicker: Button
     private var imageUris = mutableListOf<Uri>()
+
+
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -73,8 +81,6 @@ class MainActivity : AppCompatActivity() {
 
     }
 
-
-
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleIntent(intent)
@@ -95,45 +101,45 @@ class MainActivity : AppCompatActivity() {
                     intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)?.let { uris ->
                         imageUris = mutableListOf()
                         imageUris.addAll(uris)
-                        uris.forEach { uri ->
-                        }
                     }
                 }
             }
-            if (intent.action == Intent.ACTION_SEND_MULTIPLE) {
-                intent.clipData?.let { clipData ->
-                    imageUris = mutableListOf()
-                    for (i in 0 until clipData.itemCount) {
-                        val uri = clipData.getItemAt(i).uri
-                        imageUris.add(uri)
-                    }
-                } ?: intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)?.let { uris ->
-                    imageUris = mutableListOf()
-                    imageUris.addAll(uris)
-                    uris.forEach { uri ->
-                    }
-                }
-            }
-
 
             // Update UI to reflect the number of images
-            tvNumberOfFiles.text = "Number of files: ${imageUris.size}"
-            val urisText = imageUris.joinToString(separator = "\n") { uri ->
-                val currentRating = getCurrentRating(uri)
-                val displayName = getFileName(uri) ?: "Unknown"
-                val parentFolder = getParentFolderName(uri) ?: "Unknown"
-                "/$parentFolder/$displayName (${currentRating.toStars()})"
-            }
-            tvInfo.text = urisText
-
+            updateUiWithImages()
         }
     }
 
 
+    private fun updateUiWithImages() {
+        Log.d("UpdateUI", "Updating UI with ${imageUris.size} images")
+        tvNumberOfFiles.text = "Number of files: ${imageUris.size}"
+
+        val urisText = imageUris.joinToString(separator = "\n") { uri ->
+            val currentRating = getCurrentRating(uri)
+            val displayName = getFileName(uri)
+            val parentFolder = getParentFolderName(uri) ?: "Unknown"
+            "/$parentFolder/$displayName (${currentRating.toStars()})"
+        }
+
+        tvInfo.text = urisText
+        Log.d("UpdateUI", "UI updated with text: $urisText")
+    }
 
 
     private fun openFilePicker() {
-        val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI).apply {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (!Environment.isExternalStorageManager()) {
+                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                startActivity(intent)
+                return
+            }
+        }
+
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
             type = "image/jpeg"
             putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
         }
@@ -141,95 +147,136 @@ class MainActivity : AppCompatActivity() {
     }
 
 
-
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
 
-        if (requestCode == MODIFY_IMAGE_REQUEST && resultCode == Activity.RESULT_OK  && data != null) {
-            handleFilePickerResult(data)
-        }
+        Log.d("ActivityResult", "onActivityResult called with requestCode: $requestCode, resultCode: $resultCode")
+        Log.d("ActivityResult", "Intent data: ${data?.toString()}")
 
-        if (requestCode == WRITE_REQUEST_CODE) {
-            if (resultCode == Activity.RESULT_OK) {
-                // User granted write access to the selected files
-                // Proceed with modifying the files
-            } else {
-                // User denied the write access
-                Toast.makeText(this, "Write access denied", Toast.LENGTH_SHORT).show()
-            }
+        if (requestCode == MODIFY_IMAGE_REQUEST && resultCode == Activity.RESULT_OK) {
+            data?.let { handleFilePickerResult(it) }
+        } else {
+            Log.e("ActivityResult", "File selection failed or was cancelled")
+            Toast.makeText(this, "File selection failed or was cancelled", Toast.LENGTH_SHORT).show()
         }
-
     }
 
     private fun handleFilePickerResult(data: Intent) {
-
-        // Clear the previous list
         imageUris.clear()
 
-        // Handling a single selected image
-        data.data?.let { uri ->
-            imageUris.add(uri)
-        }
-
-        // Handling multiple selected images
-        data.clipData?.let { clipData ->
-            for (i in 0 until clipData.itemCount) {
-                val imageUri = clipData.getItemAt(i).uri
-                imageUris.add(imageUri)
+        when {
+            data.clipData != null -> {
+                val clipData = data.clipData!!
+                for (i in 0 until clipData.itemCount) {
+                    imageUris.add(clipData.getItemAt(i).uri)
+                }
+            }
+            data.data != null -> {
+                imageUris.add(data.data!!)
             }
         }
 
-        // Log URIs for debugging
-        imageUris.forEach { uri ->
-            Log.d("SelectedURI", uri.toString())
-        }
+        Log.d("FilePickerResult", "Selected ${imageUris.size} files")
 
-        // Request write access for the selected URIs
         if (imageUris.isNotEmpty()) {
             requestWriteAccess()
+        } else {
+            Log.e("FilePickerResult", "No files selected")
+            Toast.makeText(this, "No files selected", Toast.LENGTH_SHORT).show()
         }
 
-        tvNumberOfFiles.text = "Number of files: ${imageUris.size}"
-        val urisText = imageUris.joinToString(separator = "\n") { uri ->
-            val currentRating = getCurrentRating(uri)
-            val displayName = getFileName(uri) ?: "Unknown"
-            val parentFolder = getParentFolderName(uri) ?: "Unknown"
-            "/$parentFolder/$displayName (${currentRating.toStars()})"
-        }
-        tvInfo.text = urisText
+        updateUiWithImages()
     }
 
 
 
-    private fun getCurrentRating(uri: Uri): Int {
-        Log.d("getCurrentRating", "Checking rating for URI: $uri")
-        return try {
-            contentResolver.openInputStream(uri)?.use { inputStream ->
-                val fileData = inputStream.readBytes()
-                Log.d("getCurrentRating", "Read ${fileData.size} bytes from URI: $uri")
+    private fun requestWriteAccess() {
+        Log.d("WriteAccess", "Entering requestWriteAccess")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (!Environment.isExternalStorageManager()) {
+                Log.d("WriteAccess", "Requesting MANAGE_EXTERNAL_STORAGE permission")
+                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                startActivityForResult(intent, MANAGE_EXTERNAL_STORAGE_REQUEST)
+                return
+            }
+        }
 
-                val metadata = Imaging.getMetadata(fileData)
-                Log.d("getCurrentRating", "Metadata: $metadata")
+        val contentUriList = imageUris.mapNotNull { uri ->
+            Log.d("WriteAccess", "Processing URI: $uri")
+            when {
+                DocumentsContract.isDocumentUri(this, uri) -> {
+                    Log.d("WriteAccess", "Is document URI")
+                    uri
+                }
+                uri.scheme == "content" -> {
+                    Log.d("WriteAccess", "Is content URI")
+                    uri
+                }
+                else -> {
+                    Log.e("WriteAccess", "Unsupported URI scheme: ${uri.scheme}")
+                    null
+                }
+            }
+        }
+        Log.d("WriteAccess", "Content URIs: $contentUriList")
 
-                val xmpXml = Imaging.getXmpXml(fileData)
-                Log.d("getCurrentRating", "XMP data: $xmpXml")
-
-                extractRatingFromXmp(xmpXml)
-            } ?: 0
-        } catch (e: Exception) {
-            Log.e("getCurrentRating", "Exception occurred: ${e.message}")
-            0
+        if (contentUriList.isNotEmpty()) {
+            try {
+                val intentSender = MediaStore.createWriteRequest(contentResolver, contentUriList).intentSender
+                startIntentSenderForResult(intentSender, WRITE_REQUEST_CODE, null, 0, 0, 0)
+                Log.d("WriteAccess", "Write request sent for ${contentUriList.size} files")
+            } catch (e: IntentSender.SendIntentException) {
+                Log.e("WriteAccess", "Error requesting write access: ${e.message}")
+                Toast.makeText(this, "Failed to request write access", Toast.LENGTH_SHORT).show()
+            } catch (e: IllegalArgumentException) {
+                Log.e("WriteAccess", "IllegalArgumentException: ${e.message}")
+                Toast.makeText(this, "Invalid file selection", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            Log.e("WriteAccess", "No valid content URIs found")
+            Toast.makeText(this, "No valid files to modify", Toast.LENGTH_SHORT).show()
         }
     }
+
+    private fun getContentUriFromFileUri(uri: Uri): Uri? {
+        Log.d("ContentUri", "Converting URI: $uri")
+        return when {
+            DocumentsContract.isDocumentUri(this, uri) -> {
+                Log.d("ContentUri", "Is document URI")
+                uri
+            }
+            uri.scheme == "content" -> {
+                Log.d("ContentUri", "Is content URI")
+                uri
+            }
+            else -> {
+                Log.d("ContentUri", "Attempting to get content URI from file URI")
+                val projection = arrayOf(MediaStore.Images.Media._ID)
+                contentResolver.query(
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                    projection,
+                    "${MediaStore.Images.Media.DATA} = ?",
+                    arrayOf(uri.path),
+                    null
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID))
+                        ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
+                    } else {
+                        Log.e("ContentUri", "Failed to get content URI")
+                        null
+                    }
+                }
+            }
+        }
+    }
+
 
 
     private fun extractRatingFromXmp(xmpXml: String?): Int {
-        if (xmpXml == null) {
-            Log.d("extractRatingFromXmp", "No XMP data found")
-            return 0
-        }
-
-        Log.d("extractRatingFromXmp", "Parsing XMP data: $xmpXml")
+        if (xmpXml == null) return 0
 
         val dbFactory = DocumentBuilderFactory.newInstance()
         dbFactory.isNamespaceAware = true
@@ -238,42 +285,64 @@ class MainActivity : AppCompatActivity() {
         val rdfNamespaceUri = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
         val xmpNamespaceUri = "http://ns.adobe.com/xap/1.0/"
 
-        // Access the rdf:Description element properly
         val rdfDescriptions = doc.getElementsByTagNameNS(rdfNamespaceUri, "Description")
 
-        if (rdfDescriptions.length == 0) {
-            Log.d("extractRatingFromXmp", "No rdf:Description element found")
-            return 0
-        }
+        if (rdfDescriptions.length == 0) return 0
 
         for (i in 0 until rdfDescriptions.length) {
             val rdfDescription = rdfDescriptions.item(i) as Element
             val ratingString = rdfDescription.getAttributeNS(xmpNamespaceUri, "Rating")
             if (ratingString.isNotEmpty()) {
-                Log.d("extractRatingFromXmp", "Extracted rating: $ratingString")
                 return ratingString.toIntOrNull() ?: 0
             }
         }
-
-        Log.d("extractRatingFromXmp", "Rating attribute not found in rdf:Description elements")
         return 0
     }
 
 
+    private fun getCurrentRating(uri: Uri): Int {
+        return try {
+            contentResolver.openInputStream(uri)?.use { inputStream ->
+                val fileData = inputStream.readBytes()
+                val xmpXml = Imaging.getXmpXml(fileData)
+                extractRatingFromXmp(xmpXml)
+            } ?: 0
+        } catch (e: Exception) {
+            Log.e("getCurrentRating", "Exception occurred: ${e.message}")
+            0
+        }
+    }
 
-    private fun getFileName(uri: Uri): String? {
-        var fileName: String? = null
-        val cursor = contentResolver.query(uri, null, null, null, null)
-        cursor?.use {
-            if (it.moveToFirst()) {
-                val columnIndex = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                if (columnIndex != -1) {
-                    fileName = it.getString(columnIndex)
+    private fun getFileName(uri: Uri): String {
+        Log.d("FileName", "Getting filename for URI: $uri")
+        return when (uri.scheme) {
+            "content" -> {
+                contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val displayNameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        if (displayNameIndex != -1) {
+                            cursor.getString(displayNameIndex)
+                        } else {
+                            Log.e("FileName", "DISPLAY_NAME column not found")
+                            uri.lastPathSegment ?: "Unknown"
+                        }
+                    } else {
+                        Log.e("FileName", "Cursor is empty")
+                        "Unknown"
+                    }
+                } ?: run {
+                    Log.e("FileName", "Query returned null")
+                    "Unknown"
                 }
             }
-        }
-        return fileName
+            "file" -> uri.lastPathSegment ?: "Unknown"
+            else -> {
+                Log.e("FileName", "Unhandled URI scheme: ${uri.scheme}")
+                "Unknown"
+            }
+        }.also { Log.d("FileName", "Filename: $it") }
     }
+
 
     private fun getParentFolderName(uri: Uri): String? {
         val pathSegments = uri.pathSegments
@@ -285,78 +354,39 @@ class MainActivity : AppCompatActivity() {
     }
 
 
-
-    private fun requestWriteAccess() {
-        if (imageUris.isNotEmpty()) {
-            val intentSender = MediaStore.createWriteRequest(contentResolver, imageUris).intentSender
-            try {
-                startIntentSenderForResult(intentSender, WRITE_REQUEST_CODE, null, 0, 0, 0)
-            } catch (e: IntentSender.SendIntentException) {
-                Log.e("requestWriteAccess", "Error requesting write access: $e")
-            }
-        } else {
-            Toast.makeText(this, "No images selected", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-
-
-
-
-    companion object {
-        private const val MODIFY_IMAGE_REQUEST = 1
-        private const val WRITE_REQUEST_CODE = 2
-    }
-
-
     private fun applyRatingToImages() {
         modifySharedFiles(applicationContext)
         refreshFileList()
         Toast.makeText(this, "Ratings applied successfully", Toast.LENGTH_SHORT).show()
     }
 
-
     private fun refreshFileList() {
-        tvNumberOfFiles.text = "Number of files: ${imageUris.size}"
-        val urisText = imageUris.joinToString(separator = "\n") { uri ->
-            val currentRating = getCurrentRating(uri)
-            val displayName = getFileName(uri) ?: "Unknown"
-            val parentFolder = getParentFolderName(uri) ?: "Unknown"
-            "/$parentFolder/$displayName (${currentRating.toStars()})"
-        }
-        tvInfo.text = urisText
+        updateUiWithImages()
     }
-
-
-
 
     fun modifyXmpXml(xmpXml: String?, newRating: Int): String {
         if (xmpXml == null) return ""
 
         val dbFactory = DocumentBuilderFactory.newInstance()
-        dbFactory.isNamespaceAware = true // Enable namespace awareness
+        dbFactory.isNamespaceAware = true
         val dBuilder = dbFactory.newDocumentBuilder()
         val doc = dBuilder.parse(xmpXml.byteInputStream())
         val rdfNamespaceUri = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
         val xmpNamespaceUri = "http://ns.adobe.com/xap/1.0/"
 
-        // Find the rdf:Description element
         val rdfDescription = doc.getElementsByTagNameNS(rdfNamespaceUri, "Description").run {
             if (this.length > 0) this.item(0) as Element else null
         }
 
         if (rdfDescription != null) {
-            // Update the xmp:Rating attribute if rdf:Description exists
             rdfDescription.setAttributeNS(xmpNamespaceUri, "xmp:Rating", newRating.toString())
         } else {
-            // Create a new rdf:Description with the rating if it doesn't exist
             val newRdfDescription = doc.createElementNS(rdfNamespaceUri, "rdf:Description").apply {
                 setAttributeNS(xmpNamespaceUri, "xmp:Rating", newRating.toString())
             }
             doc.documentElement.appendChild(newRdfDescription)
         }
 
-        // Convert back to String
         val transformer = TransformerFactory.newInstance().newTransformer().apply {
             setOutputProperty(OutputKeys.INDENT, "yes")
         }
@@ -366,8 +396,6 @@ class MainActivity : AppCompatActivity() {
 
         return writer.toString()
     }
-
-
 
     fun createXmpXmlWithRating(rating: Int): String {
         return """
@@ -382,12 +410,17 @@ class MainActivity : AppCompatActivity() {
     """.trimIndent()
     }
 
-
-
     private fun modifySharedFiles(context: Context) {
-        Log.d("apply", "start modifying")
         imageUris.forEach { uri ->
             try {
+                // Check if the file is a valid JPEG
+                val mimeType = context.contentResolver.getType(uri)
+                if (mimeType != "image/jpeg") {
+                    Log.e("modifySharedFiles", "Skipping non-JPEG file: $uri")
+                    showToast(context, "Skipping non-JPEG file: $uri")
+                    return@forEach
+                }
+
                 context.contentResolver.openInputStream(uri)?.use { inputStream ->
                     val imageData = inputStream.readBytes()
                     val xmpXml = Imaging.getXmpXml(imageData)
@@ -399,7 +432,7 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     if (modifiedXmp.isNotEmpty()) {
-                        val jpegXmpRewriter = JpegXmpRewriter()
+                        val jpegXmpRewriter = org.apache.commons.imaging.formats.jpeg.xmp.JpegXmpRewriter()
                         ByteArrayOutputStream().use { outputStream ->
                             jpegXmpRewriter.updateXmpXml(imageData, outputStream, modifiedXmp)
                             val modifiedImageData = outputStream.toByteArray()
@@ -413,13 +446,13 @@ class MainActivity : AppCompatActivity() {
             } catch (e: IOException) {
                 Log.e("modifySharedFile", "IOException occurred: ${e.message}")
                 showToast(context, "IOException occurred: ${e.message}")
+            } catch (e: org.apache.commons.imaging.ImageReadException) {
+                Log.e("modifySharedFile", "ImageReadException occurred: ${e.message}")
+                showToast(context, "File is not a valid JPEG: ${e.message}")
             }
         }
-        Log.d("modifySharedFile", "Done!")
-        showToast(context, "Done!")
         refreshFileList()
     }
-
 
 
     private fun updateMediaStoreFile(context: Context, uri: Uri, imageData: ByteArray) {
@@ -432,9 +465,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-
     private fun showToast(context: Context, message: String) {
         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
     }
 
+    companion object {
+        private const val MODIFY_IMAGE_REQUEST = 1
+        private const val WRITE_REQUEST_CODE = 2
+        private const val MANAGE_EXTERNAL_STORAGE_REQUEST = 3
+    }
 }
