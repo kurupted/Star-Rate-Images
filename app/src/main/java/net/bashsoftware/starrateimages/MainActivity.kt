@@ -118,8 +118,8 @@ class MainActivity : AppCompatActivity() {
         val urisText = imageUris.joinToString(separator = "\n") { uri ->
             val currentRating = getCurrentRating(uri)
             val displayName = getFileName(uri)
-            val parentFolder = getParentFolderName(uri) ?: "Unknown"
-            "/$parentFolder/$displayName (${currentRating.toStars()})"
+            //val parentFolder = getParentFolderName(uri) ?: "Unknown"
+            "$displayName (${currentRating.toStars()})"
         }
 
         tvInfo.text = urisText
