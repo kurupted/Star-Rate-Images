@@ -45,6 +45,9 @@ import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.provider.Settings
+import java.io.File
+
+private var tempFilePath: String? = null
 
 
 
@@ -88,16 +91,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun handleIntent(intent: Intent) {
         if (intent.action == Intent.ACTION_SEND || intent.action == Intent.ACTION_SEND_MULTIPLE) {
+            Toast.makeText(this, "Note: When sharing files to this app, you may have to save copies instead of updating the originals.", Toast.LENGTH_SHORT).show()
+
             when {
                 intent.action == Intent.ACTION_SEND -> {
-                    // Single image shared
                     intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)?.let { uri ->
                         imageUris = mutableListOf()
                         imageUris.add(uri)
                     }
                 }
                 intent.action == Intent.ACTION_SEND_MULTIPLE -> {
-                    // Multiple images shared
                     intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)?.let { uris ->
                         imageUris = mutableListOf()
                         imageUris.addAll(uris)
@@ -107,6 +110,12 @@ class MainActivity : AppCompatActivity() {
 
             // Update UI to reflect the number of images
             updateUiWithImages()
+
+            // Request write access for shared URIs using MediaStore
+            // This will prompt the user for permission to modify files you did not create.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                requestWriteAccessViaMediaStore(imageUris)
+            }
         }
     }
 
@@ -128,16 +137,6 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun openFilePicker() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            if (!Environment.isExternalStorageManager()) {
-                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-                    data = Uri.parse("package:$packageName")
-                }
-                startActivity(intent)
-                return
-            }
-        }
-
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "image/jpeg"
@@ -147,19 +146,56 @@ class MainActivity : AppCompatActivity() {
     }
 
 
+
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
 
         Log.d("ActivityResult", "onActivityResult called with requestCode: $requestCode, resultCode: $resultCode")
         Log.d("ActivityResult", "Intent data: ${data?.toString()}")
 
-        if (requestCode == MODIFY_IMAGE_REQUEST && resultCode == Activity.RESULT_OK) {
-            data?.let { handleFilePickerResult(it) }
-        } else {
-            Log.e("ActivityResult", "File selection failed or was cancelled")
-            Toast.makeText(this, "File selection failed or was cancelled", Toast.LENGTH_SHORT).show()
+        when (requestCode) {
+            MODIFY_IMAGE_REQUEST -> {
+                if (resultCode == Activity.RESULT_OK) {
+                    data?.let { handleFilePickerResult(it) }
+                } else {
+                    Log.e("ActivityResult", "File selection failed or was cancelled")
+                    Toast.makeText(this, "File selection failed or was cancelled", Toast.LENGTH_SHORT).show()
+                }
+            }
+            WRITE_REQUEST_CODE -> {
+                if (resultCode == Activity.RESULT_OK) {
+                    Toast.makeText(this, "Write access granted. Please retry the update.", Toast.LENGTH_SHORT).show()
+                    // Optionally re-run your update for the affected files.
+                } else {
+                    Toast.makeText(this, "Write access denied.", Toast.LENGTH_SHORT).show()
+                }
+            }
+            SAVE_MODIFIED_FILE_REQUEST -> {
+                if (resultCode == Activity.RESULT_OK && data != null) {
+                    val destinationUri = data.data
+                    if (destinationUri != null && tempFilePath != null) {
+                        try {
+                            val tempFile = File(tempFilePath!!)
+                            val fileBytes = tempFile.readBytes()
+                            contentResolver.openOutputStream(destinationUri)?.use { outputStream ->
+                                outputStream.write(fileBytes)
+                            }
+                            showToast(this, "Modified file saved successfully.")
+                            tempFile.delete()  // Clean up the temporary file.
+                        } catch (ex: Exception) {
+                            Log.e("onActivityResult", "Error saving modified file: ${ex.message}")
+                            showToast(this, "Failed to save modified file.")
+                        }
+                    }
+                }
+            }
+            else -> {
+                Log.e("ActivityResult", "Unhandled request code: $requestCode")
+                Toast.makeText(this, "Unhandled request code", Toast.LENGTH_SHORT).show()
+            }
         }
     }
+
 
     private fun handleFilePickerResult(data: Intent) {
         imageUris.clear()
@@ -191,20 +227,7 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun requestWriteAccess() {
-        Log.d("WriteAccess", "Entering requestWriteAccess")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            if (!Environment.isExternalStorageManager()) {
-                Log.d("WriteAccess", "Requesting MANAGE_EXTERNAL_STORAGE permission")
-                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-                    data = Uri.parse("package:$packageName")
-                }
-                startActivityForResult(intent, MANAGE_EXTERNAL_STORAGE_REQUEST)
-                return
-            }
-        }
-
         imageUris.forEach { uri ->
-            Log.d("WriteAccess", "Processing URI: $uri")
             try {
                 val takeFlags: Int = Intent.FLAG_GRANT_READ_URI_PERMISSION or
                         Intent.FLAG_GRANT_WRITE_URI_PERMISSION
@@ -215,6 +238,26 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
+
+
+    private fun requestWriteAccessViaMediaStore(uris: List<Uri>) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                // Create a write request for the given URIs.
+                val writeRequest = MediaStore.createWriteRequest(contentResolver, uris)
+                val intentSender = writeRequest.intentSender
+                // Launch the permission prompt.
+                startIntentSenderForResult(intentSender, WRITE_REQUEST_CODE, null, 0, 0, 0)
+            } catch (e: Exception) {
+                Log.e("RequestWriteAccess", "Error requesting write permission via MediaStore: ${e.message}")
+            }
+        } else {
+            Log.e("RequestWriteAccess", "MediaStore.createWriteRequest is not available below Android R.")
+        }
+    }
+
+
+
 
     private fun getContentUriFromFileUri(uri: Uri): Uri? {
         Log.d("ContentUri", "Converting URI: $uri")
@@ -389,12 +432,17 @@ class MainActivity : AppCompatActivity() {
     private fun modifySharedFiles(context: Context) {
         imageUris.forEach { uri ->
             try {
-                // Check if we have write permission
                 val takeFlags: Int = Intent.FLAG_GRANT_READ_URI_PERMISSION or
                         Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                context.contentResolver.takePersistableUriPermission(uri, takeFlags)
+                try {
+                    // Try to take persistable permission; if it fails, log and continue.
+                    context.contentResolver.takePersistableUriPermission(uri, takeFlags)
+                } catch (e: SecurityException) {
+                    Log.e("modifySharedFiles", "Could not take persistable permission for ${getFileName(uri)}: ${e.message}")
+                    // Continue processing; we'll handle write issues later.
+                }
 
-                // Check if the file is a valid JPEG
+                // Check if the file is a valid JPEG.
                 val mimeType = context.contentResolver.getType(uri)
                 if (mimeType != "image/jpeg") {
                     Log.e("modifySharedFiles", "Skipping non-JPEG file: $uri")
@@ -440,15 +488,83 @@ class MainActivity : AppCompatActivity() {
     }
 
 
+    private fun fallbackUpdateSharedFile(originalUri: Uri, modifiedImageData: ByteArray) {
+        try {
+            // Write modified data to a temporary file in the cache directory.
+            val tempFile = File.createTempFile("modified_", ".jpg", cacheDir)
+            FileOutputStream(tempFile).use { fos ->
+                fos.write(modifiedImageData)
+            }
+            tempFilePath = tempFile.absolutePath
+
+            // Launch ACTION_CREATE_DOCUMENT to let the user choose where to save the modified file.
+            val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "image/jpeg"
+                putExtra(Intent.EXTRA_TITLE, getFileName(originalUri) ?: "modified.jpg")
+            }
+            startActivityForResult(intent, SAVE_MODIFIED_FILE_REQUEST)
+        } catch (ex: Exception) {
+            Log.e("fallbackUpdateSharedFile", "Error in fallback file update: ${ex.message}")
+            showToast(this, "Failed to save modified file via fallback.")
+        }
+    }
+
+
     private fun updateMediaStoreFile(context: Context, uri: Uri, imageData: ByteArray) {
         try {
             context.contentResolver.openOutputStream(uri)?.use { outputStream ->
                 outputStream.write(imageData)
+            } ?: run {
+                Log.e("updateMediaStoreFile", "Output stream is null for URI: $uri")
+                showToast(context, "Unable to open file for writing.")
             }
-        } catch (e: IOException) {
-            Log.e("updateMediaStoreFile", "Failed to write to MediaStore file: $e")
+        } catch (e: SecurityException) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && e is android.app.RecoverableSecurityException) {
+                try {
+                    // Use getUserAction() to obtain the intent sender.
+                    val intentSender = e.userAction.actionIntent.intentSender
+                    startIntentSenderForResult(intentSender, WRITE_REQUEST_CODE, null, 0, 0, 0)
+                } catch (ex: Exception) {
+                    Log.e("updateMediaStoreFile", "Error requesting write permission: ${ex.message}")
+                    // Fallback if the permission request fails.
+                    fallbackUpdateSharedFile(uri, imageData)
+                }
+            } else {
+                Log.e("updateMediaStoreFile", "Failed to write to MediaStore file: $e")
+                // For any non-recoverable SecurityException, try fallback.
+                fallbackUpdateSharedFile(uri, imageData)
+            }
+        } catch (ioe: IOException) {
+            Log.e("updateMediaStoreFile", "Failed to write to MediaStore file: $ioe")
         }
     }
+
+
+
+    // todo: could use this to find files being shared to app by looking for them in the mediastore, but it's by filename so may no be correct...
+    private fun findMediaStoreUriByFilename(context: Context, filename: String): Uri? {
+        val projection = arrayOf(MediaStore.Images.Media._ID, MediaStore.Images.Media.DISPLAY_NAME)
+        val selection = "${MediaStore.Images.Media.DISPLAY_NAME} = ?"
+        val selectionArgs = arrayOf(filename)
+
+        context.contentResolver.query(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            projection,
+            selection,
+            selectionArgs,
+            null
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+                val id = cursor.getLong(idColumn)
+                return ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
+            }
+        }
+        return null
+    }
+
+
 
     private fun showToast(context: Context, message: String) {
         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
@@ -457,6 +573,6 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val MODIFY_IMAGE_REQUEST = 1
         private const val WRITE_REQUEST_CODE = 2
-        private const val MANAGE_EXTERNAL_STORAGE_REQUEST = 3
+        private const val SAVE_MODIFIED_FILE_REQUEST = 4
     }
 }

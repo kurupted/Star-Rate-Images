@@ -2,18 +2,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- For reading files from external storage -->
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
-
-    <!-- For reading media files, required on Android 13 and above -->
+    <!-- For reading external storage and media files -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
 
     <!-- For writing to external storage on Android 9 and below -->
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
 
-    <!-- For managing all files in external storage on Android 11 and above -->
-    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
-        tools:ignore="ScopedStorage" />
 
 
     <application
